@@ -1,0 +1,108 @@
+version: '3.8'
+
+services:
+  # WriteSense Agent Application
+  write-sense-agent:
+    build: .
+    container_name: write-sense-agent
+    ports:
+      - "8123:8000"  # LangGraph API default port
+    environment:
+      # LLM Configuration
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4-1106-preview}
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.1}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-4000}
+      
+      # API Keys
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      # - TAVILY_API_KEY=${TAVILY_API_KEY}
+      
+      # LangSmith (Optional)
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-write-sense-agent}
+      
+      # Database and Redis URLs (LangGraph format)
+      - POSTGRES_URI=postgres://postgres:postgres@langgraph-postgres:5432/postgres?sslmode=disable
+      - REDIS_URI=redis://langgraph-redis:6379
+      
+      # Application Configuration
+      - DEBUG=${DEBUG:-false}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    
+    volumes:
+      # Mount .env file for environment variables
+      - ./.env:/deps/write-sense-agent/.env:ro
+      # Mount logs directory
+      - ./logs:/deps/write-sense-agent/logs
+    
+    depends_on:
+      langgraph-postgres:
+        condition: service_healthy
+      langgraph-redis:
+        condition: service_healthy
+    
+    networks:
+      - write-sense-network
+    
+    restart: unless-stopped
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/ok"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # PostgreSQL Database for LangGraph Persistence
+  langgraph-postgres:
+    image: postgres:16
+    container_name: langgraph-postgres
+    environment:
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - langgraph-data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"  # Use 5433 to avoid conflicts with local PostgreSQL
+    networks:
+      - write-sense-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      start_period: 10s
+      timeout: 1s
+      retries: 5
+      interval: 5s
+
+  # Redis for LangGraph Caching and State
+  langgraph-redis:
+    image: redis:6
+    container_name: langgraph-redis
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - write-sense-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 1s
+      retries: 5
+
+# Named Volumes for Data Persistence
+volumes:
+  langgraph-data:
+    driver: local
+  redis-data:
+    driver: local
+
+# Networks
+networks:
+  write-sense-network:
+    driver: bridge
+    name: write-sense-network 

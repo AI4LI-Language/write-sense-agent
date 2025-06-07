@@ -1,0 +1,25 @@
+# Core LangGraph and LangChain
+langgraph>=0.2.39
+langchain>=0.3.7
+langchain-anthropic>=0.2.4
+langchain-openai>=0.2.8
+langchain-community>=0.3.7
+langgraph-cli
+langgraph-api
+
+# Model Context Protocol (MCP)
+mcp>=1.0.0
+langchain-mcp-adapters>=0.1.0
+
+# Core dependencies
+pydantic>=2.9.0
+uvicorn>=0.32.1
+fastapi>=0.115.4
+python-dotenv>=1.0.0
+aiohttp>=3.10.0
+requests>=2.31.0
+python-multipart>=0.0.6
+
+# Additional utilities
+typer>=0.12.0
+rich>=13.7.0 
