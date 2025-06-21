@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.tools import tool
-from langchain_community.tools.tavily_search import TavilySearchResults
+from langchain_tavily import TavilySearch
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, MessagesState
 from langgraph.prebuilt import create_react_agent
@@ -155,11 +155,19 @@ class OrchestratorAgent:
         
         # Add web search capability if available
         try:
-            tavily = TavilySearchResults(
+            import os
+            # Get the API key from environment variables
+            tavily_api_key = os.environ.get("TAVILY_API_KEY")
+            if not tavily_api_key:
+                logger.warning("TAVILY_API_KEY environment variable not set. Skipping Tavily search tool.")
+                return additional_tools
+            
+            # Use the new TavilySearch from langchain-tavily
+            tavily = TavilySearch(
                 max_results=3,
                 search_depth="advanced",
                 include_answer=True,
-                include_raw_content=False,
+                # include_raw_content parameter is not available in TavilySearch from langchain-tavily
             )
             additional_tools.append(tavily)
             logger.info("Added Tavily search tool to orchestrator")
@@ -319,39 +327,22 @@ class OrchestratorAgent:
 
     def _generate_dynamic_system_prompt(self) -> str:
         """Generate a complete system prompt with dynamic delegation guidelines."""
-        # Base system prompt with Vietnamese response requirement and disability support
-        base_prompt = (
-            "You are the WriteSense Agent, an intelligent assistant specifically designed to help people with "
-            "disabilities create and work with documents. Your primary purpose is to assist users in writing reports, "
-            "diaries, and other types of documents through natural interaction with humans.\n\n"
-            "IMPORTANT: YOU MUST ALWAYS RESPOND TO USERS IN VIETNAMESE regardless of what language they use to communicate with you.\n\n"
-            "You coordinate multiple specialized sub-agents to handle user requests. You have access to delegation tools "
-            "that connect to specialized agents with specific capabilities.\n\n"
-        )
+        # Start with the configured system prompt that includes format requirements
+        base_prompt = self.config.orchestrator.system_prompt
         
-        # Dynamic delegation guidelines
+        # Add dynamic delegation guidelines
         delegation_guidelines = self._generate_dynamic_delegation_guidelines()
-        dynamic_section = f"AVAILABLE DELEGATION OPTIONS:\n{delegation_guidelines}\n\n"
+        dynamic_section = f"\n\nAVAILABLE DELEGATION OPTIONS:\n{delegation_guidelines}\n\n"
         
-        # Rest of the prompt
-        rest_prompt = (
+        # Additional guidance for demonstration
+        demonstration_guidance = (
             "When a user asks about your capabilities or what you can do, ALWAYS demonstrate by using "
             "the appropriate delegation tools to show your specialized agents in action. Don't just describe "
             "what you can do - actually delegate to the relevant agents to prove your capabilities.\n\n"
-            "DISABILITY SUPPORT GUIDELINES:\n"
-            "- Use simple and clear language that is easy to understand\n"
-            "- Provide detailed step-by-step instructions when needed\n"
-            "- Be patient and supportive throughout the document creation process\n"
-            "- Suggest alternative approaches to complete tasks when appropriate\n"
-            "- Always confirm understanding before proceeding to the next step\n"
-            "- Break down complex tasks into smaller, manageable parts\n"
-            "- Offer encouragement and positive reinforcement\n"
-            "- Be flexible and adapt to different user needs and abilities\n\n"
-            "Always provide comprehensive responses by leveraging your specialized agents and synthesizing "
-            "their results into a coherent answer in Vietnamese."
+            "Remember: You MUST maintain the exact Action/Content format specified above, even when delegating to sub-agents."
         )
         
-        full_prompt = base_prompt + dynamic_section + rest_prompt
+        full_prompt = base_prompt + dynamic_section + demonstration_guidance
         
         # Log the generated prompt for debugging
         logger.info("Generated dynamic system prompt with delegation guidelines:")

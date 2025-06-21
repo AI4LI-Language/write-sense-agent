@@ -98,88 +98,122 @@ class MCPAgent:
     
     async def initialize(self) -> None:
         """Initialize the agent by connecting to MCP servers and loading tools."""
-        if len(self.server_configs) == 1:
-            # Single server - use direct connection
-            await self._initialize_single_server()
-        else:
-            # Multiple servers - use MultiServerMCPClient
-            await self._initialize_multi_server()
-        
-        # Create the ReAct agent
-        self.agent = create_react_agent(
-            self.llm,
-            self.tools,
-            prompt=self.system_prompt,
-            checkpointer=self.checkpointer,
-        )
-        
-        logger.info(f"Agent '{self.name}' initialized with {len(self.tools)} tools")
+        try:
+            if len(self.server_configs) == 1:
+                # Single server - use direct connection
+                await self._initialize_single_server()
+            else:
+                # Multiple servers - use MultiServerMCPClient
+                await self._initialize_multi_server()
+            
+            # Create the ReAct agent
+            self.agent = create_react_agent(
+                self.llm,
+                self.tools,
+                prompt=self.system_prompt,
+                checkpointer=self.checkpointer,
+            )
+            
+            logger.info(f"Agent '{self.name}' initialized with {len(self.tools)} tools")
+        except Exception as e:
+            logger.error(f"Failed to initialize agent '{self.name}': {e}")
+            # Create agent with empty tools as fallback
+            self.tools = []
+            self.agent = create_react_agent(
+                self.llm,
+                self.tools,
+                prompt=self.system_prompt,
+                checkpointer=self.checkpointer,
+            )
+            logger.warning(f"Agent '{self.name}' initialized with 0 tools (fallback mode)")
     
     async def _initialize_single_server(self) -> None:
         """Initialize agent with a single MCP server."""
         server_name, server_config = next(iter(self.server_configs.items()))
         
-        if server_config.transport == TransportType.STDIO:
-            await self._load_stdio_tools(server_config)
-        elif server_config.transport in (TransportType.SSE, TransportType.STREAMABLE_HTTP):
-            await self._load_http_tools(server_config)
-        else:
-            raise ValueError(f"Unsupported transport type: {server_config.transport}")
+        try:
+            if server_config.transport == TransportType.STDIO:
+                await self._load_stdio_tools(server_config)
+            elif server_config.transport in (TransportType.SSE, TransportType.STREAMABLE_HTTP):
+                await self._load_http_tools(server_config)
+            else:
+                raise ValueError(f"Unsupported transport type: {server_config.transport}")
+        except Exception as e:
+            logger.error(f"Failed to initialize server '{server_name}': {e}")
+            self.tools = []  # Fallback to empty tools
     
     async def _initialize_multi_server(self) -> None:
         """Initialize agent with multiple MCP servers using MultiServerMCPClient."""
-        # Convert server configs to MultiServerMCPClient format
-        client_config = {}
-        for name, config in self.server_configs.items():
-            if config.transport == TransportType.STDIO:
-                client_config[name] = {
-                    "command": config.command,
-                    "args": config.args,
-                    "transport": "stdio",
-                }
-                if config.env:
-                    client_config[name]["env"] = config.env
-            elif config.transport == TransportType.SSE:
-                client_config[name] = {
-                    "url": config.url,
-                    "transport": "sse",
-                }
-            elif config.transport == TransportType.STREAMABLE_HTTP:
-                client_config[name] = {
-                    "url": config.url,
-                    "transport": "streamable_http",
-                }
-        
-        # Initialize client
-        self.client = MultiServerMCPClient(client_config)
-        await self.client.__aenter__()
-        
-        # Load tools
-        self.tools = self.client.get_tools()
+        try:
+            # Convert server configs to MultiServerMCPClient format
+            client_config = {}
+            for name, config in self.server_configs.items():
+                if config.transport == TransportType.STDIO:
+                    client_config[name] = {
+                        "command": config.command,
+                        "args": config.args,
+                        "transport": "stdio",
+                    }
+                    if config.env:
+                        client_config[name]["env"] = config.env
+                elif config.transport == TransportType.SSE:
+                    client_config[name] = {
+                        "url": config.url,
+                        "transport": "sse",
+                    }
+                elif config.transport == TransportType.STREAMABLE_HTTP:
+                    client_config[name] = {
+                        "url": config.url,
+                        "transport": "streamable_http",
+                    }
+            
+            # Initialize client
+            self.client = MultiServerMCPClient(client_config)
+            await self.client.__aenter__()
+            
+            # Load tools
+            self.tools = self.client.get_tools()
+        except Exception as e:
+            logger.error(f"Failed to initialize multi-server client: {e}")
+            self.tools = []  # Fallback to empty tools
     
     async def _load_stdio_tools(self, server_config: MCPServerConfig) -> None:
         """Load tools from a stdio MCP server."""
-        server_params = StdioServerParameters(
-            command=server_config.command,
-            args=server_config.args,
-            env=server_config.env or None,
-        )
-        
-        # Note: For production use, you might want to keep the connection alive
-        # This is a simplified version for demonstration
-        async with stdio_client(server_params) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                self.tools = await load_mcp_tools(session)
+        try:
+            server_params = StdioServerParameters(
+                command=server_config.command,
+                args=server_config.args,
+                env=server_config.env or None,
+            )
+            
+            # Use a timeout to prevent hanging
+            async with asyncio.timeout(30):  # 30 second timeout
+                async with stdio_client(server_params) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        self.tools = await load_mcp_tools(session)
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout while loading stdio tools from {server_config.command}")
+            self.tools = []  # Fallback to empty tools
+        except FileNotFoundError as e:
+            logger.error(f"MCP server executable not found: {server_config.command} - {e}")
+            self.tools = []  # Fallback to empty tools
+        except Exception as e:
+            logger.error(f"Failed to load stdio tools: {e}", exc_info=True)
+            self.tools = []  # Fallback to empty tools
     
     async def _load_http_tools(self, server_config: MCPServerConfig) -> None:
         """Load tools from an HTTP/SSE MCP server."""
-        # Note: This is a simplified implementation
-        # In production, you might want to use a more robust HTTP client
-        async with streamablehttp_client(server_config.url) as (read, write, _):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                self.tools = await load_mcp_tools(session)
+        try:
+            # Use a timeout to prevent hanging
+            async with asyncio.timeout(30):  # 30 second timeout
+                async with streamablehttp_client(server_config.url) as (read, write, _):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        self.tools = await load_mcp_tools(session)
+        except Exception as e:
+            logger.error(f"Failed to load HTTP tools: {e}")
+            self.tools = []  # Fallback to empty tools
     
     async def invoke(
         self,

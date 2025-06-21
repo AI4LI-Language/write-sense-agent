@@ -4,12 +4,14 @@ langchain>=0.3.7
 langchain-anthropic>=0.2.4
 langchain-openai>=0.2.8
 langchain-community>=0.3.7
+langchain-tavily>=0.1.0
 langgraph-cli
 langgraph-api
 
 # Model Context Protocol (MCP)
 mcp>=1.0.0
 langchain-mcp-adapters>=0.1.0
+tavily-python
 
 # Core dependencies
 pydantic>=2.9.0
